@@ -140,7 +140,7 @@ class ModelFreeRunner(BaseRunner):
         self.wandb_logger = None
         if api_key:
             self.wandb_logger = WanDBLogger(
-                api_key=api_key, project_name="test-project"
+                api_key=api_key, project_name="visual-representation-learning"
             )
         t = 0
         start_idx = self.last_saved_episode
@@ -155,7 +155,7 @@ class ModelFreeRunner(BaseRunner):
             ep_ret = 0
             total_reward = 0
             info = None
-            while not done:
+            while (not done) and (t < self.max_episode_length):
                 t += 1
                 self.agent.deterministic = False
                 action_obj = self.agent.select_action(obs_encoded)
@@ -240,6 +240,21 @@ class ModelFreeRunner(BaseRunner):
         # Not implemented for logging multiple test episodes
         # assert self.cfg["num_test_episodes"] == 1
 
+        metrics_avg_list = {
+            "Num Test Episodes": self.num_test_episodes,
+            "Avg Eval Reward": 0,
+            "Avg Eval Distance": 0,
+            "Avg Eval Time": 0,
+            "Avg Eval Num Infractions": 0,
+            "Avg Eval Speed": 0,
+            "Avg Eval Average Displacement Error": 0,
+            "Avg Eval Trajectory Efficiency": 0,
+            "Avg Eval Trajectory Admissability": 0,
+            "Avg Eval Movement Smoothness": 0,
+            "Avg Eval Laps Completed": 0,
+            "Avg Eval Success Rate": 0
+        }
+
         for j in range(self.num_test_episodes):
 
             if self.env_wrapped:
@@ -256,11 +271,11 @@ class ModelFreeRunner(BaseRunner):
             )
             experience, t_eval = [], 0
 
-            while (not eval_done) & (eval_ep_len <= self.max_episode_length):
+            while (not eval_done) and (eval_ep_len <= self.max_episode_length):
+
                 # Take deterministic actions at test time
                 self.agent.deterministic = True
                 self.t = 1e6
-                eval_action_obj = self.agent.select_action(eval_obs_encoded)
                 eval_action_obj = self.agent.select_action(eval_obs_encoded)
                 if self.env_wrapped:
                     (
@@ -335,12 +350,36 @@ class ModelFreeRunner(BaseRunner):
                             "timestep/sec"
                         ],
                         "Eval Laps completed": eval_info["metrics"]["laps_completed"],
+                        "Eval Success Rate": eval_info["metrics"]["success_rate"]
                     }
                 )
+
+            # Accumulate metrics to provide average
+            metrics_avg_list["Avg Eval Reward"] += eval_ep_ret
+            metrics_avg_list["Avg Eval Distance"] += eval_info["metrics"]["total_distance"]
+            metrics_avg_list["Avg Eval Time"] += eval_info["metrics"]["total_time"]
+            metrics_avg_list["Avg Eval Num Infractions"] += eval_info["metrics"]["num_infractions"]
+            metrics_avg_list["Avg Eval Speed"] += eval_info["metrics"]["average_speed_kph"]
+            metrics_avg_list["Avg Eval Average Displacement Error"] += eval_info["metrics"]["average_displacement_error"]
+            metrics_avg_list["Avg Eval Trajectory Efficiency"] += eval_info["metrics"]["trajectory_efficiency"]
+            metrics_avg_list["Avg Eval Trajectory Admissability"] += eval_info["metrics"]["trajectory_admissibility"]
+            metrics_avg_list["Avg Eval Movement Smoothness"] += eval_info["metrics"]["movement_smoothness"]
+            metrics_avg_list["Avg Eval Success Rate"] += eval_info["metrics"]["success_rate"]
 
             # TODO: add back - info no longer contains "pct_complete"
 
             # self.agent.update_best_pct_complete(info)
+
+        # Emit average metrics
+        for key in metrics_avg_list.keys():
+            if key != "Num Test Episodes":
+                metrics_avg_list[key] /= self.num_test_episodes
+
+        if self.wandb_logger:
+            self.wandb_logger.log(
+                metrics_avg_list
+            )
+
         return max(val_ep_rets)
 
     def checkpoint_model(self, ep_ret, ep_number):
